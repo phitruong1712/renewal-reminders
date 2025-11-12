@@ -71,13 +71,35 @@ export async function POST(request: NextRequest) {
           .eq('primary_email', normalizedEmail)
           .single();
 
-        const isUpdate = !!existing;
+        let customer;
+        if (existing) {
+          // Update existing customer
+          const { data: updatedCustomer, error: updateError } = await supabase
+            .from('customers')
+            .update({
+              company_name: row.company_name || null,
+              contact_name: row.contact_name || null,
+              cc_emails: ccEmails,
+              plan_name: row.plan_name || null,
+              renew_link: row.renew_link || null,
+              expires_on: row.expires_on,
+              paused: row.paused || false,
+            })
+            .eq('id', existing.id)
+            .select()
+            .single();
 
-        // Upsert customer
-        const { data: customer, error: upsertError } = await supabase
-          .from('customers')
-          .upsert(
-            {
+          if (updateError || !updatedCustomer) {
+            console.error('Failed to update customer:', normalizedEmail, updateError);
+            continue;
+          }
+          customer = updatedCustomer;
+          updated++;
+        } else {
+          // Insert new customer
+          const { data: insertedCustomer, error: insertError } = await supabase
+            .from('customers')
+            .insert({
               company_name: row.company_name || null,
               contact_name: row.contact_name || null,
               primary_email: normalizedEmail,
@@ -86,22 +108,15 @@ export async function POST(request: NextRequest) {
               renew_link: row.renew_link || null,
               expires_on: row.expires_on,
               paused: row.paused || false,
-            },
-            {
-              onConflict: 'primary_email',
-            }
-          )
-          .select()
-          .single();
+            })
+            .select()
+            .single();
 
-        if (upsertError || !customer) {
-          console.error('Failed to upsert customer:', normalizedEmail, upsertError);
-          continue;
-        }
-
-        if (isUpdate) {
-          updated++;
-        } else {
+          if (insertError || !insertedCustomer) {
+            console.error('Failed to insert customer:', normalizedEmail, insertError);
+            continue;
+          }
+          customer = insertedCustomer;
           inserted++;
         }
 

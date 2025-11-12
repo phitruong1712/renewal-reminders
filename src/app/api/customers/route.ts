@@ -86,11 +86,41 @@ export async function POST(request: NextRequest) {
 
     const normalizedEmail = normalizeEmail(data.primary_email);
 
-    // Upsert customer
-    const { data: customer, error: upsertError } = await supabase
+    // Check if customer exists
+    const { data: existing } = await supabase
       .from('customers')
-      .upsert(
-        {
+      .select('id')
+      .eq('primary_email', normalizedEmail)
+      .single();
+
+    let customer;
+    if (existing) {
+      // Update existing customer
+      const { data: updated, error: updateError } = await supabase
+        .from('customers')
+        .update({
+          company_name: data.company_name || null,
+          contact_name: data.contact_name || null,
+          cc_emails: data.cc_emails || null,
+          plan_name: data.plan_name || null,
+          renew_link: data.renew_link || null,
+          expires_on: data.expires_on,
+          paused: data.paused || false,
+        })
+        .eq('id', existing.id)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.error('Supabase error:', updateError);
+        return NextResponse.json({ error: updateError.message }, { status: 500 });
+      }
+      customer = updated;
+    } else {
+      // Insert new customer
+      const { data: inserted, error: insertError } = await supabase
+        .from('customers')
+        .insert({
           company_name: data.company_name || null,
           contact_name: data.contact_name || null,
           primary_email: normalizedEmail,
@@ -99,17 +129,15 @@ export async function POST(request: NextRequest) {
           renew_link: data.renew_link || null,
           expires_on: data.expires_on,
           paused: data.paused || false,
-        },
-        {
-          onConflict: 'primary_email',
-        }
-      )
-      .select()
-      .single();
+        })
+        .select()
+        .single();
 
-    if (upsertError) {
-      console.error('Supabase error:', upsertError);
-      return NextResponse.json({ error: upsertError.message }, { status: 500 });
+      if (insertError) {
+        console.error('Supabase error:', insertError);
+        return NextResponse.json({ error: insertError.message }, { status: 500 });
+      }
+      customer = inserted;
     }
 
     if (!customer) {
