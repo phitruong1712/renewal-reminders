@@ -99,7 +99,6 @@ export async function POST(request: NextRequest) {
           renew_link: data.renew_link || null,
           expires_on: data.expires_on,
           paused: data.paused || false,
-          updated_at: new Date().toISOString(),
         },
         {
           onConflict: 'primary_email',

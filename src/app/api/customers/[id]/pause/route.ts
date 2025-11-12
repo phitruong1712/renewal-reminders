@@ -21,7 +21,7 @@ export async function POST(
 
     const { error } = await supabase
       .from('customers')
-      .update({ paused: data.paused, updated_at: new Date().toISOString() })
+      .update({ paused: data.paused })
       .eq('id', customerId);
 
     if (error) {

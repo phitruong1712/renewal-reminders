@@ -81,7 +81,7 @@ export async function POST(
     // Update customer
     const { error: updateError } = await supabase
       .from('customers')
-      .update({ expires_on: newExpiresOn, updated_at: new Date().toISOString() })
+      .update({ expires_on: newExpiresOn })
       .eq('id', customerId);
 
     if (updateError) {

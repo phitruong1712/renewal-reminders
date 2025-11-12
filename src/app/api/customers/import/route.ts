@@ -86,7 +86,6 @@ export async function POST(request: NextRequest) {
               renew_link: row.renew_link || null,
               expires_on: row.expires_on,
               paused: row.paused || false,
-              updated_at: new Date().toISOString(),
             },
             {
               onConflict: 'primary_email',
