@@ -91,12 +91,12 @@ export async function POST(request: NextRequest) {
       .from('customers')
       .select('id')
       .eq('primary_email', normalizedEmail)
-      .single();
+      .maybeSingle();
 
     let customer;
     if (existing) {
       // Update existing customer
-      const { data: updated, error: updateError } = await supabase
+      const { error: updateError } = await supabase
         .from('customers')
         .update({
           company_name: data.company_name || null,
@@ -107,13 +107,23 @@ export async function POST(request: NextRequest) {
           expires_on: data.expires_on,
           paused: data.paused || false,
         })
-        .eq('id', existing.id)
-        .select()
-        .single();
+        .eq('id', existing.id);
 
       if (updateError) {
         console.error('Supabase error:', updateError);
         return NextResponse.json({ error: updateError.message }, { status: 500 });
+      }
+
+      // Fetch updated customer (without updated_at)
+      const { data: updated, error: fetchError } = await supabase
+        .from('customers')
+        .select('id, company_name, contact_name, primary_email, cc_emails, plan_name, renew_link, expires_on, paused, last_reminder_status, last_reminder_sent_at')
+        .eq('id', existing.id)
+        .single();
+
+      if (fetchError || !updated) {
+        console.error('Supabase error:', fetchError);
+        return NextResponse.json({ error: fetchError?.message || 'Failed to fetch updated customer' }, { status: 500 });
       }
       customer = updated;
     } else {
@@ -130,7 +140,7 @@ export async function POST(request: NextRequest) {
           expires_on: data.expires_on,
           paused: data.paused || false,
         })
-        .select()
+        .select('id, company_name, contact_name, primary_email, cc_emails, plan_name, renew_link, expires_on, paused, last_reminder_status, last_reminder_sent_at')
         .single();
 
       if (insertError) {

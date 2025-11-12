@@ -69,12 +69,12 @@ export async function POST(request: NextRequest) {
           .from('customers')
           .select('id')
           .eq('primary_email', normalizedEmail)
-          .single();
+          .maybeSingle();
 
         let customer;
         if (existing) {
           // Update existing customer
-          const { data: updatedCustomer, error: updateError } = await supabase
+          const { error: updateError } = await supabase
             .from('customers')
             .update({
               company_name: row.company_name || null,
@@ -85,12 +85,22 @@ export async function POST(request: NextRequest) {
               expires_on: row.expires_on,
               paused: row.paused || false,
             })
+            .eq('id', existing.id);
+
+          if (updateError) {
+            console.error('Failed to update customer:', normalizedEmail, updateError);
+            continue;
+          }
+
+          // Fetch updated customer
+          const { data: updatedCustomer, error: fetchError } = await supabase
+            .from('customers')
+            .select('id')
             .eq('id', existing.id)
-            .select()
             .single();
 
-          if (updateError || !updatedCustomer) {
-            console.error('Failed to update customer:', normalizedEmail, updateError);
+          if (fetchError || !updatedCustomer) {
+            console.error('Failed to fetch updated customer:', normalizedEmail, fetchError);
             continue;
           }
           customer = updatedCustomer;
@@ -109,7 +119,7 @@ export async function POST(request: NextRequest) {
               expires_on: row.expires_on,
               paused: row.paused || false,
             })
-            .select()
+            .select('id')
             .single();
 
           if (insertError || !insertedCustomer) {
