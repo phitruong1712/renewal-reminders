@@ -1,159 +1,82 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabaseServer';
-import { sendEmailRaw, renderReminder } from '@/lib/email';
+import { NextResponse } from 'next/server';
 import dayjs from 'dayjs';
-import type { CustomerRow } from '@/lib/types';
+import { supabase } from '@/lib/supabaseServer';
+import { sendEmailRaw } from '@/lib/email';
 
-export async function GET(request: NextRequest) {
-  const cronSecret = request.headers.get('x-cron-secret');
-  const expectedSecret = process.env.CRON_SECRET;
+function authorized(req: Request): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
 
-  if (!expectedSecret || cronSecret !== expectedSecret) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const x = req.headers.get('x-cron-secret');
+  if (x && x === secret) return true;
+
+  const auth = req.headers.get('authorization') || req.headers.get('Authorization');
+  if (auth && auth === `Bearer ${secret}`) return true;
+
+  return false;
+}
+
+export async function GET(req: Request) {
+  if (!authorized(req)) {
+    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
   }
 
-  const searchParams = request.nextUrl.searchParams;
-  const dryRun = searchParams.get('dry') === '1';
+  const dry = new URL(req.url).searchParams.get('dry') === '1';
 
-  try {
-    const now = dayjs().toISOString();
+  // Find due reminders (pending, scheduled_at <= now, and customer not paused)
+  const nowIso = new Date().toISOString();
+  const { data: due, error } = await supabase
+    .from('reminders')
+    .select('id, customer_id, scheduled_at, status, customers!inner(primary_email, cc_emails, company_name, contact_name, renew_link, expires_on, paused)')
+    .lte('scheduled_at', nowIso)
+    .eq('status', 'pending');
 
-    // First, get all non-paused customer IDs
-    const { data: activeCustomers, error: customersError } = await supabase
-      .from('customers')
-      .select('id')
-      .eq('paused', false);
+  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+  const work = (due || []).filter((r: any) => !(r.customers?.paused));
+  if (!work.length) return NextResponse.json({ ok: true, sent: 0, dryRun: dry });
 
-    if (customersError) {
-      console.error('Supabase error:', customersError);
-      return NextResponse.json({ error: customersError.message }, { status: 500 });
-    }
+  let sent = 0, failed = 0;
 
-    const activeCustomerIds = activeCustomers?.map((c) => c.id) || [];
+  for (const r of work as any[]) {
+    const c = r.customers;
+    const to = c.primary_email as string;
+    const cc = (c.cc_emails ?? undefined) as string[] | undefined;
+    const subject = `Renewal reminder — expires ${dayjs(c.expires_on).format('YYYY-MM-DD')}`;
+    const body = [
+      `Hi ${c.contact_name ?? 'there'},`,
+      '',
+      `Your subscription for ${c.company_name ?? 'your account'} will expire on ${dayjs(c.expires_on).format('YYYY-MM-DD')}.`,
+      'Please renew before the date to avoid interruption.',
+      c.renew_link ? `Renew here: ${c.renew_link}` : undefined,
+      '',
+      'Thank you!',
+    ].filter(Boolean).join('\n');
 
-    if (activeCustomerIds.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sent: 0,
-        failed: 0,
-        dryRun,
-      });
-    }
-
-    // Find due reminders for non-paused customers
-    const { data: reminders, error: remindersError } = await supabase
-      .from('reminders')
-      .select(`
-        *,
-        customers:customer_id (
-          *
-        )
-      `)
-      .eq('status', 'pending')
-      .lte('scheduled_at', now)
-      .in('customer_id', activeCustomerIds);
-
-    if (remindersError) {
-      console.error('Supabase error:', remindersError);
-      return NextResponse.json({ error: remindersError.message }, { status: 500 });
-    }
-
-    if (!reminders || reminders.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        sent: 0,
-        failed: 0,
-        dryRun,
-      });
-    }
-
-    let sent = 0;
-    let failed = 0;
-
-    for (const reminder of reminders) {
-      const customer = reminder.customers as unknown as CustomerRow;
-      
-      if (!customer || customer.paused) {
-        continue;
+    try {
+      let msgId: string | undefined = undefined;
+      if (!dry) {
+        const result = await sendEmailRaw(to, subject, body, cc);
+        msgId = result.id;
       }
 
-      try {
-        if (!dryRun) {
-          // Render email
-          const { subject, body } = renderReminder(customer);
+      // mark sent
+      await supabase.from('reminders')
+        .update({ status: dry ? 'pending' : 'sent', sent_at: dry ? null : new Date().toISOString(), provider_message_id: dry ? null : msgId })
+        .eq('id', r.id);
+      await supabase.from('customers')
+        .update({ last_reminder_status: dry ? 'dry-run' : 'sent', last_reminder_sent_at: dry ? null : new Date().toISOString() })
+        .eq('id', r.customer_id);
+      await supabase.from('send_logs')
+        .insert({ reminder_id: r.id, customer_id: r.customer_id, status: dry ? 'dry-run' : 'sent', error: null });
 
-          // Send email
-          const emailResult = await sendEmailRaw(
-            customer.primary_email,
-            subject,
-            body,
-            customer.cc_emails || undefined
-          );
-
-          // Update reminder
-          await supabase
-            .from('reminders')
-            .update({
-              status: 'sent',
-              sent_at: now,
-              provider_message_id: emailResult.id,
-            })
-            .eq('id', reminder.id);
-
-          // Update customer
-          await supabase
-            .from('customers')
-            .update({
-              last_reminder_status: 'sent',
-              last_reminder_sent_at: now,
-            })
-            .eq('id', customer.id);
-
-          // Insert send_logs
-          await supabase.from('send_logs').insert({
-            reminder_id: reminder.id,
-            customer_id: customer.id,
-            status: 'sent',
-            error: null,
-          });
-        }
-
-        sent++;
-      } catch (error) {
-        console.error('Failed to send reminder:', reminder.id, error);
-
-        // Update reminder status
-        await supabase
-          .from('reminders')
-          .update({
-            status: 'failed',
-            sent_at: now,
-          })
-          .eq('id', reminder.id);
-
-        // Insert send_logs with error
-        await supabase.from('send_logs').insert({
-          reminder_id: reminder.id,
-          customer_id: customer.id,
-          status: 'failed',
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-
-        failed++;
-      }
+      sent++;
+    } catch (e: any) {
+      await supabase.from('send_logs')
+        .insert({ reminder_id: r.id, customer_id: r.customer_id, status: 'failed', error: String(e?.message ?? e) });
+      await supabase.from('reminders').update({ status: 'failed' }).eq('id', r.id);
+      failed++;
     }
-
-    return NextResponse.json({
-      ok: true,
-      sent,
-      failed,
-      dryRun,
-    });
-  } catch (error) {
-    console.error('Unexpected error:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Internal server error' },
-      { status: 500 }
-    );
   }
+
+  return NextResponse.json({ ok: true, sent, failed, dryRun: dry });
 }
