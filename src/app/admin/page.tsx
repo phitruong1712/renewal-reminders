@@ -1,26 +1,29 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import dayjs from 'dayjs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { useToast } from '@/lib/toast';
+import { fetchJson } from '@/lib/fetchJson';
+import { Search, Plus, Upload, RefreshCw, Edit, Pause, Play } from 'lucide-react';
+import type { CustomerRow } from '@/lib/types';
 
-interface Customer {
-  id: string;
-  company_name: string;
-  contact_name: string;
-  primary_email: string;
-  cc_emails: string[];
-  plan_name: string;
-  renew_link: string;
-  expires_on: string;
-  created_at?: string;
-  updated_at?: string;
-}
+const PAGE_SIZE = 20;
 
 export default function AdminPage() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customers, setCustomers] = useState<CustomerRow[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [showImportForm, setShowImportForm] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [showRenewDialog, setShowRenewDialog] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
   const [formData, setFormData] = useState({
     company_name: '',
     contact_name: '',
@@ -29,45 +32,55 @@ export default function AdminPage() {
     plan_name: '',
     renew_link: '',
     expires_on: '',
+    paused: false,
   });
   const [importData, setImportData] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  const { toast } = useToast();
 
+  // Debounce search
   useEffect(() => {
-    fetchCustomers();
-  }, []);
+    const timer = setTimeout(() => {
+      setDebouncedQuery(searchQuery);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
-  const fetchCustomers = async () => {
+  // Fetch customers
+  const fetchCustomers = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/customers');
-      const data = await res.json();
-      if (res.ok) {
-        setCustomers(data.customers || []);
-      } else {
-        setError(data.error || 'Failed to fetch customers');
+      const params = new URLSearchParams({
+        page: page.toString(),
+        pageSize: PAGE_SIZE.toString(),
+      });
+      if (debouncedQuery) {
+        params.append('q', debouncedQuery);
       }
-    } catch (err) {
-      setError('Failed to fetch customers');
-      console.error(err);
+      const data = await fetchJson<{ rows: CustomerRow[]; total: number }>(
+        `/api/customers?${params}`
+      );
+      setCustomers(data.rows);
+      setTotal(data.total);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Failed to fetch customers', 'error');
     } finally {
       setLoading(false);
     }
-  };
+  }, [debouncedQuery, page, toast]);
+
+  useEffect(() => {
+    fetchCustomers();
+  }, [fetchCustomers]);
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setSuccess(null);
-
     try {
       const ccEmails = formData.cc_emails
         .split(',')
-        .map((email) => email.trim())
+        .map((e) => e.trim())
         .filter(Boolean);
-
-      const res = await fetch('/api/customers', {
+      await fetchJson('/api/customers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -75,107 +88,172 @@ export default function AdminPage() {
           cc_emails: ccEmails,
         }),
       });
+      toast('Customer added successfully', 'success');
+      setShowAddDialog(false);
+      resetForm();
+      fetchCustomers();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Failed to add customer', 'error');
+    }
+  };
 
-      const data = await res.json();
-
-      if (res.ok) {
-        setSuccess('Customer added successfully');
-        setFormData({
-          company_name: '',
-          contact_name: '',
-          primary_email: '',
-          cc_emails: '',
-          plan_name: '',
-          renew_link: '',
-          expires_on: '',
-        });
-        setShowAddForm(false);
-        fetchCustomers();
-      } else {
-        setError(data.error || 'Failed to add customer');
-      }
-    } catch (err) {
-      setError('Failed to add customer');
-      console.error(err);
+  const handleEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCustomer) return;
+    try {
+      const ccEmails = formData.cc_emails
+        .split(',')
+        .map((e) => e.trim())
+        .filter(Boolean);
+      await fetchJson('/api/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...formData,
+          cc_emails: ccEmails,
+        }),
+      });
+      toast('Customer updated successfully', 'success');
+      setShowEditDialog(false);
+      resetForm();
+      fetchCustomers();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Failed to update customer', 'error');
     }
   };
 
   const handleImport = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError(null);
-    setSuccess(null);
-
     try {
       const lines = importData.split('\n').filter((line) => line.trim());
       const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
       
-      let successCount = 0;
-      let errorCount = 0;
-
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',').map((v) => v.trim());
-        const customer: any = {};
-        
+      const rows = lines.slice(1).map((line) => {
+        const values = line.split(',').map((v) => v.trim());
+        const row: any = {};
         headers.forEach((header, index) => {
-          customer[header] = values[index] || '';
+          row[header] = values[index] || '';
         });
+        return {
+          company_name: row.company_name || row.company,
+          contact_name: row.contact_name || row.contact,
+          primary_email: row.primary_email || row.email,
+          cc_emails: row.cc_emails ? row.cc_emails.split(',').map((e: string) => e.trim()).filter(Boolean) : [],
+          plan_name: row.plan_name || row.plan,
+          renew_link: row.renew_link || row.link,
+          expires_on: row.expires_on || row.expires,
+          paused: row.paused === 'true' || row.paused === '1',
+        };
+      }).filter((row) => row.primary_email && row.expires_on);
 
-        try {
-          const ccEmails = customer.cc_emails
-            ? customer.cc_emails.split(';').map((e: string) => e.trim()).filter(Boolean)
-            : [];
-
-          const res = await fetch('/api/customers', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              company_name: customer.company_name || customer.company,
-              contact_name: customer.contact_name || customer.contact,
-              primary_email: customer.primary_email || customer.email,
-              cc_emails: ccEmails,
-              plan_name: customer.plan_name || customer.plan,
-              renew_link: customer.renew_link || customer.link,
-              expires_on: customer.expires_on || customer.expires,
-            }),
-          });
-
-          if (res.ok) {
-            successCount++;
-          } else {
-            errorCount++;
-          }
-        } catch (err) {
-          errorCount++;
+      const result = await fetchJson<{ inserted: number; updated: number; reminders: number }>(
+        '/api/customers/import',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows }),
         }
-      }
-
-      setSuccess(`Imported ${successCount} customers. ${errorCount} failed.`);
+      );
+      toast(`Imported ${result.inserted} new, ${result.updated} updated`, 'success');
+      setShowImportDialog(false);
       setImportData('');
-      setShowImportForm(false);
       fetchCustomers();
-    } catch (err) {
-      setError('Failed to import customers');
-      console.error(err);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Failed to import customers', 'error');
     }
   };
 
-  const handleRenew = (customer: Customer) => {
-    window.open(customer.renew_link, '_blank');
+  const handleRenew = async (term: string) => {
+    if (!selectedCustomer) return;
+    try {
+      await fetchJson(`/api/customers/${selectedCustomer.id}/renew`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ term }),
+      });
+      toast('Customer renewed successfully', 'success');
+      setShowRenewDialog(false);
+      fetchCustomers();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Failed to renew customer', 'error');
+    }
   };
 
-  const getDaysUntilExpiry = (expiresOn: string) => {
+  const handleRenewCustom = async (date: string) => {
+    if (!selectedCustomer) return;
+    try {
+      await fetchJson(`/api/customers/${selectedCustomer.id}/renew`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date }),
+      });
+      toast('Customer renewed successfully', 'success');
+      setShowRenewDialog(false);
+      fetchCustomers();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Failed to renew customer', 'error');
+    }
+  };
+
+  const handlePause = async (customer: CustomerRow, paused: boolean) => {
+    try {
+      await fetchJson(`/api/customers/${customer.id}/pause`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused }),
+      });
+      toast(`Customer ${paused ? 'paused' : 'unpaused'} successfully`, 'success');
+      fetchCustomers();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Failed to update customer', 'error');
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      company_name: '',
+      contact_name: '',
+      primary_email: '',
+      cc_emails: '',
+      plan_name: '',
+      renew_link: '',
+      expires_on: '',
+      paused: false,
+    });
+    setSelectedCustomer(null);
+  };
+
+  const openEditDialog = (customer: CustomerRow) => {
+    setSelectedCustomer(customer);
+    setFormData({
+      company_name: customer.company_name || '',
+      contact_name: customer.contact_name || '',
+      primary_email: customer.primary_email,
+      cc_emails: customer.cc_emails?.join(', ') || '',
+      plan_name: customer.plan_name || '',
+      renew_link: customer.renew_link || '',
+      expires_on: customer.expires_on || '',
+      paused: customer.paused,
+    });
+    setShowEditDialog(true);
+  };
+
+  const openRenewDialog = (customer: CustomerRow) => {
+    setSelectedCustomer(customer);
+    setShowRenewDialog(true);
+  };
+
+  const getExpiryStatus = (expiresOn: string | null) => {
+    if (!expiresOn) return { text: 'Unknown', class: 'bg-gray-100 text-gray-800' };
     const days = dayjs(expiresOn).diff(dayjs(), 'day');
-    return days;
+    if (days < 0) return { text: 'Expired', class: 'bg-red-100 text-red-800' };
+    if (days === 0) return { text: 'Today', class: 'bg-red-100 text-red-800' };
+    if (days <= 3) return { text: `${days}d`, class: 'bg-orange-100 text-orange-800' };
+    if (days <= 7) return { text: `${days}d`, class: 'bg-yellow-100 text-yellow-800' };
+    return { text: `${days}d`, class: 'bg-green-100 text-green-800' };
   };
 
-  const getExpiryStatus = (expiresOn: string) => {
-    const days = getDaysUntilExpiry(expiresOn);
-    if (days < 0) return { text: 'Expired', class: 'bg-red-100 text-red-800' };
-    if (days === 0) return { text: 'Expires Today', class: 'bg-red-100 text-red-800' };
-    if (days <= 3) return { text: `${days} days`, class: 'bg-orange-100 text-orange-800' };
-    if (days <= 7) return { text: `${days} days`, class: 'bg-yellow-100 text-yellow-800' };
-    return { text: `${days} days`, class: 'bg-green-100 text-green-800' };
-  };
+  const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (
     <div className="min-h-screen bg-gray-50 p-8">
@@ -186,160 +264,427 @@ export default function AdminPage() {
             <p className="text-gray-600 mt-2">Manage customer renewals</p>
           </div>
           <div className="flex gap-4">
-            <button
-              onClick={() => {
-                setShowAddForm(true);
-                setShowImportForm(false);
-              }}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
+            <Button onClick={() => setShowAddDialog(true)}>
+              <Plus className="w-4 h-4 mr-2" />
               Add Customer
-            </button>
-            <button
-              onClick={() => {
-                setShowImportForm(true);
-                setShowAddForm(false);
-              }}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-            >
+            </Button>
+            <Button onClick={() => setShowImportDialog(true)} variant="outline">
+              <Upload className="w-4 h-4 mr-2" />
               Import CSV
-            </button>
-            <a
-              href="/"
-              className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
-            >
-              Home
-            </a>
+            </Button>
+            <Button onClick={fetchCustomers} variant="ghost">
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh
+            </Button>
           </div>
         </div>
 
-        {error && (
-          <div className="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
-            {error}
+        <div className="mb-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+            <Input
+              type="text"
+              placeholder="Search customers..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
           </div>
-        )}
+        </div>
 
-        {success && (
-          <div className="mb-4 p-4 bg-green-100 border border-green-400 text-green-700 rounded">
-            {success}
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Company
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Contact
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Email
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Plan
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Expires On
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Last Reminder
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Paused
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {loading ? (
+                  <tr>
+                    <td colSpan={9} className="px-6 py-4 text-center text-gray-500">
+                      Loading...
+                    </td>
+                  </tr>
+                ) : customers.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-6 py-4 text-center text-gray-500">
+                      No customers found
+                    </td>
+                  </tr>
+                ) : (
+                  customers.map((customer) => {
+                    const status = getExpiryStatus(customer.expires_on);
+                    return (
+                      <tr key={customer.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {customer.company_name || '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {customer.contact_name || '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {customer.primary_email}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {customer.plan_name || '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {customer.expires_on ? dayjs(customer.expires_on).format('MMM D, YYYY') : '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {customer.last_reminder_sent_at
+                            ? dayjs(customer.last_reminder_sent_at).format('MMM D, YYYY')
+                            : '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`px-2 py-1 text-xs font-semibold rounded-full ${status.class}`}>
+                            {status.text}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handlePause(customer, !customer.paused)}
+                          >
+                            {customer.paused ? (
+                              <Play className="w-4 h-4" />
+                            ) : (
+                              <Pause className="w-4 h-4" />
+                            )}
+                          </Button>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openEditDialog(customer)}
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => openRenewDialog(customer)}
+                          >
+                            Renew
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
-        )}
-
-        {showAddForm && (
-          <div className="mb-8 p-6 bg-white rounded-lg shadow">
-            <h2 className="text-xl font-bold mb-4">Add Customer</h2>
-            <form onSubmit={handleAdd} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Company Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.company_name}
-                    onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Contact Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.contact_name}
-                    onChange={(e) => setFormData({ ...formData, contact_name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Primary Email *
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={formData.primary_email}
-                    onChange={(e) => setFormData({ ...formData, primary_email: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    CC Emails (comma-separated)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.cc_emails}
-                    onChange={(e) => setFormData({ ...formData, cc_emails: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="email1@example.com, email2@example.com"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Plan Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.plan_name}
-                    onChange={(e) => setFormData({ ...formData, plan_name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Expires On (YYYY-MM-DD) *
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={formData.expires_on}
-                    onChange={(e) => setFormData({ ...formData, expires_on: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Renew Link (URL) *
-                  </label>
-                  <input
-                    type="url"
-                    required
-                    value={formData.renew_link}
-                    onChange={(e) => setFormData({ ...formData, renew_link: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
+          {totalPages > 1 && (
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-between items-center">
+              <div className="text-sm text-gray-500">
+                Showing {((page - 1) * PAGE_SIZE) + 1} to {Math.min(page * PAGE_SIZE, total)} of {total} customers
               </div>
-              <div className="flex gap-4">
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={page === 1}
                 >
-                  Add Customer
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowAddForm(false)}
-                  className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
                 >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Add Dialog */}
+        <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+          <DialogContent>
+            <DialogTitle>Add Customer</DialogTitle>
+            <DialogDescription>Add a new customer to the system</DialogDescription>
+            <form onSubmit={handleAdd} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Company Name
+                </label>
+                <Input
+                  value={formData.company_name}
+                  onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Contact Name
+                </label>
+                <Input
+                  value={formData.contact_name}
+                  onChange={(e) => setFormData({ ...formData, contact_name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Primary Email *
+                </label>
+                <Input
+                  type="email"
+                  required
+                  value={formData.primary_email}
+                  onChange={(e) => setFormData({ ...formData, primary_email: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  CC Emails (comma-separated)
+                </label>
+                <Input
+                  value={formData.cc_emails}
+                  onChange={(e) => setFormData({ ...formData, cc_emails: e.target.value })}
+                  placeholder="email1@example.com, email2@example.com"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Plan Name
+                </label>
+                <Input
+                  value={formData.plan_name}
+                  onChange={(e) => setFormData({ ...formData, plan_name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Renew Link (URL)
+                </label>
+                <Input
+                  type="url"
+                  value={formData.renew_link}
+                  onChange={(e) => setFormData({ ...formData, renew_link: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Expires On (YYYY-MM-DD) *
+                </label>
+                <Input
+                  type="date"
+                  required
+                  value={formData.expires_on}
+                  onChange={(e) => setFormData({ ...formData, expires_on: e.target.value })}
+                />
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="paused"
+                  checked={formData.paused}
+                  onChange={(e) => setFormData({ ...formData, paused: e.target.checked })}
+                  className="mr-2"
+                />
+                <label htmlFor="paused" className="text-sm font-medium text-gray-700">
+                  Paused
+                </label>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setShowAddDialog(false)}>
                   Cancel
-                </button>
+                </Button>
+                <Button type="submit">Add Customer</Button>
               </div>
             </form>
-          </div>
-        )}
+          </DialogContent>
+        </Dialog>
 
-        {showImportForm && (
-          <div className="mb-8 p-6 bg-white rounded-lg shadow">
-            <h2 className="text-xl font-bold mb-4">Import CSV</h2>
-            <p className="text-sm text-gray-600 mb-4">
-              Format: company_name,contact_name,primary_email,cc_emails,plan_name,renew_link,expires_on
-            </p>
+        {/* Edit Dialog */}
+        <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+          <DialogContent>
+            <DialogTitle>Edit Customer</DialogTitle>
+            <DialogDescription>Update customer information</DialogDescription>
+            <form onSubmit={handleEdit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Company Name
+                </label>
+                <Input
+                  value={formData.company_name}
+                  onChange={(e) => setFormData({ ...formData, company_name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Contact Name
+                </label>
+                <Input
+                  value={formData.contact_name}
+                  onChange={(e) => setFormData({ ...formData, contact_name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Primary Email *
+                </label>
+                <Input
+                  type="email"
+                  required
+                  value={formData.primary_email}
+                  onChange={(e) => setFormData({ ...formData, primary_email: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  CC Emails (comma-separated)
+                </label>
+                <Input
+                  value={formData.cc_emails}
+                  onChange={(e) => setFormData({ ...formData, cc_emails: e.target.value })}
+                  placeholder="email1@example.com, email2@example.com"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Plan Name
+                </label>
+                <Input
+                  value={formData.plan_name}
+                  onChange={(e) => setFormData({ ...formData, plan_name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Renew Link (URL)
+                </label>
+                <Input
+                  type="url"
+                  value={formData.renew_link}
+                  onChange={(e) => setFormData({ ...formData, renew_link: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Expires On (YYYY-MM-DD) *
+                </label>
+                <Input
+                  type="date"
+                  required
+                  value={formData.expires_on}
+                  onChange={(e) => setFormData({ ...formData, expires_on: e.target.value })}
+                />
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="paused-edit"
+                  checked={formData.paused}
+                  onChange={(e) => setFormData({ ...formData, paused: e.target.checked })}
+                  className="mr-2"
+                />
+                <label htmlFor="paused-edit" className="text-sm font-medium text-gray-700">
+                  Paused
+                </label>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setShowEditDialog(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit">Update Customer</Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Renew Dialog */}
+        <Dialog open={showRenewDialog} onOpenChange={setShowRenewDialog}>
+          <DialogContent>
+            <DialogTitle>Renew Customer</DialogTitle>
+            <DialogDescription>
+              Renew {selectedCustomer?.company_name || selectedCustomer?.primary_email}
+            </DialogDescription>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                <Button onClick={() => handleRenew('+6m')} variant="outline">
+                  +6 Months
+                </Button>
+                <Button onClick={() => handleRenew('+12m')} variant="outline">
+                  +12 Months
+                </Button>
+                <Button onClick={() => handleRenew('+24m')} variant="outline">
+                  +24 Months
+                </Button>
+                <Button onClick={() => handleRenew('+1y')} variant="outline">
+                  +1 Year
+                </Button>
+              </div>
+              <div className="border-t pt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Custom Date (YYYY-MM-DD)
+                </label>
+                <Input
+                  type="date"
+                  id="custom-date"
+                  className="mb-2"
+                />
+                <Button
+                  onClick={() => {
+                    const dateInput = document.getElementById('custom-date') as HTMLInputElement;
+                    if (dateInput?.value) {
+                      handleRenewCustom(dateInput.value);
+                    }
+                  }}
+                  variant="outline"
+                  className="w-full"
+                >
+                  Renew to Custom Date
+                </Button>
+              </div>
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={() => setShowRenewDialog(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Import Dialog */}
+        <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
+          <DialogContent className="max-w-2xl">
+            <DialogTitle>Import CSV</DialogTitle>
+            <DialogDescription>
+              Paste CSV data with headers: company_name, contact_name, primary_email, cc_emails, plan_name, renew_link, expires_on
+            </DialogDescription>
             <form onSubmit={handleImport} className="space-y-4">
               <textarea
                 value={importData}
@@ -348,104 +693,16 @@ export default function AdminPage() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
                 placeholder="company_name,contact_name,primary_email,cc_emails,plan_name,renew_link,expires_on&#10;Acme,John Doe,john@acme.com,ops@acme.com,Pro,https://pay.example.com/acme,2025-11-12"
               />
-              <div className="flex gap-4">
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                >
-                  Import
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowImportForm(false)}
-                  className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition-colors"
-                >
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setShowImportDialog(false)}>
                   Cancel
-                </button>
+                </Button>
+                <Button type="submit">Import</Button>
               </div>
             </form>
-          </div>
-        )}
-
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200">
-            <h2 className="text-xl font-bold text-gray-900">Customers</h2>
-          </div>
-          {loading ? (
-            <div className="p-8 text-center text-gray-600">Loading...</div>
-          ) : customers.length === 0 ? (
-            <div className="p-8 text-center text-gray-600">No customers found</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Company
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Contact
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Email
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Plan
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Expires On
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Status
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {customers.map((customer) => {
-                    const status = getExpiryStatus(customer.expires_on);
-                    return (
-                      <tr key={customer.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {customer.company_name}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {customer.contact_name}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {customer.primary_email}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {customer.plan_name}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {dayjs(customer.expires_on).format('MMM D, YYYY')}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`px-2 py-1 text-xs font-semibold rounded-full ${status.class}`}>
-                            {status.text}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <button
-                            onClick={() => handleRenew(customer)}
-                            className="text-blue-600 hover:text-blue-900 font-semibold"
-                          >
-                            Renew
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
 }
-

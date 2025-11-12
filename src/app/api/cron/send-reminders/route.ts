@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabaseServer';
-import { sendEmail } from '@/lib/email';
+import { sendEmailRaw, renderReminder } from '@/lib/email';
 import dayjs from 'dayjs';
+import type { CustomerRow } from '@/lib/types';
 
 export async function GET(request: NextRequest) {
   const cronSecret = request.headers.get('x-cron-secret');
@@ -11,70 +12,142 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const searchParams = request.nextUrl.searchParams;
+  const dryRun = searchParams.get('dry') === '1';
+
   try {
-    const today = dayjs().format('YYYY-MM-DD');
-    const daysUntilExpiry = [7, 3, 1, 0];
-    const targetDates = daysUntilExpiry.map((days) =>
-      dayjs().add(days, 'day').format('YYYY-MM-DD')
-    );
+    const now = dayjs().toISOString();
 
-    const { data: customers, error } = await supabase
+    // First, get all non-paused customer IDs
+    const { data: activeCustomers, error: customersError } = await supabase
       .from('customers')
-      .select('*')
-      .in('expires_on', targetDates);
+      .select('id')
+      .eq('paused', false);
 
-    if (error) {
-      console.error('Supabase error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (customersError) {
+      console.error('Supabase error:', customersError);
+      return NextResponse.json({ error: customersError.message }, { status: 500 });
     }
 
-    if (!customers || customers.length === 0) {
-      return NextResponse.json({ message: 'No customers to remind', sent: 0 });
+    const activeCustomerIds = activeCustomers?.map((c) => c.id) || [];
+
+    if (activeCustomerIds.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        sent: 0,
+        failed: 0,
+        dryRun,
+      });
     }
 
-    let sentCount = 0;
-    const errors: string[] = [];
+    // Find due reminders for non-paused customers
+    const { data: reminders, error: remindersError } = await supabase
+      .from('reminders')
+      .select(`
+        *,
+        customers:customer_id (
+          *
+        )
+      `)
+      .eq('status', 'pending')
+      .lte('scheduled_at', now)
+      .in('customer_id', activeCustomerIds);
 
-    for (const customer of customers) {
+    if (remindersError) {
+      console.error('Supabase error:', remindersError);
+      return NextResponse.json({ error: remindersError.message }, { status: 500 });
+    }
+
+    if (!reminders || reminders.length === 0) {
+      return NextResponse.json({
+        ok: true,
+        sent: 0,
+        failed: 0,
+        dryRun,
+      });
+    }
+
+    let sent = 0;
+    let failed = 0;
+
+    for (const reminder of reminders) {
+      const customer = reminder.customers as unknown as CustomerRow;
+      
+      if (!customer || customer.paused) {
+        continue;
+      }
+
       try {
-        const expiresDate = dayjs(customer.expires_on);
-        const daysLeft = expiresDate.diff(dayjs(), 'day');
+        if (!dryRun) {
+          // Render email
+          const { subject, body } = renderReminder(customer);
 
-        const subject = `Renewal Reminder: ${customer.plan_name} expires in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}`;
-        const html = `
-          <h2>Renewal Reminder</h2>
-          <p>Hello ${customer.contact_name},</p>
-          <p>Your ${customer.plan_name} plan for <strong>${customer.company_name}</strong> expires on <strong>${expiresDate.format('MMMM D, YYYY')}</strong>.</p>
-          <p>That's in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}!</p>
-          <p><a href="${customer.renew_link}">Renew Now</a></p>
-        `;
+          // Send email
+          const emailResult = await sendEmailRaw(
+            customer.primary_email,
+            subject,
+            body,
+            customer.cc_emails || undefined
+          );
 
-        await sendEmail({
-          to: customer.primary_email,
-          cc: customer.cc_emails || [],
-          subject,
-          html,
-        });
+          // Update reminder
+          await supabase
+            .from('reminders')
+            .update({
+              status: 'sent',
+              sent_at: now,
+              provider_message_id: emailResult.id,
+            })
+            .eq('id', reminder.id);
 
-        await supabase.from('send_logs').insert({
-          customer_id: customer.id,
-          sent_at: new Date().toISOString(),
-          days_until_expiry: daysLeft,
-        });
+          // Update customer
+          await supabase
+            .from('customers')
+            .update({
+              last_reminder_status: 'sent',
+              last_reminder_sent_at: now,
+            })
+            .eq('id', customer.id);
 
-        sentCount++;
+          // Insert send_logs
+          await supabase.from('send_logs').insert({
+            reminder_id: reminder.id,
+            customer_id: customer.id,
+            status: 'sent',
+            error: null,
+          });
+        }
+
+        sent++;
       } catch (error) {
-        const errorMsg = `Failed to send to ${customer.primary_email}: ${error instanceof Error ? error.message : 'Unknown error'}`;
-        console.error(errorMsg);
-        errors.push(errorMsg);
+        console.error('Failed to send reminder:', reminder.id, error);
+
+        // Update reminder status
+        await supabase
+          .from('reminders')
+          .update({
+            status: 'failed',
+            sent_at: now,
+          })
+          .eq('id', reminder.id);
+
+        // Insert send_logs with error
+        await supabase.from('send_logs').insert({
+          reminder_id: reminder.id,
+          customer_id: customer.id,
+          status: 'failed',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+
+        failed++;
       }
     }
 
     return NextResponse.json({
-      message: 'Reminders processed',
-      sent: sentCount,
-      total: customers.length,
-      errors: errors.length > 0 ? errors : undefined,
+      ok: true,
+      sent,
+      failed,
+      dryRun,
     });
   } catch (error) {
     console.error('Unexpected error:', error);
@@ -84,4 +157,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-
