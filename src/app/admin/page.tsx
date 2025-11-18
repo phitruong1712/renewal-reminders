@@ -129,22 +129,67 @@ export default function AdminPage() {
       const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
       
       const rows = lines.slice(1).map((line) => {
-        const values = line.split(',').map((v) => v.trim());
+        // Handle CSV with quoted values (including commas inside quotes)
+        const values: string[] = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+          const char = line[i];
+          if (char === '"') {
+            inQuotes = !inQuotes;
+          } else if (char === ',' && !inQuotes) {
+            values.push(current.trim());
+            current = '';
+          } else {
+            current += char;
+          }
+        }
+        values.push(current.trim()); // Add last value
+        
         const row: any = {};
         headers.forEach((header, index) => {
           row[header] = values[index] || '';
         });
+        
+        // Helper to check if value is "Not Applicable"
+        const isNA = (val: string) => !val || val.toLowerCase() === 'not applicable' || val.trim() === '';
+        
+        // Helper to parse CC emails
+        const parseCcEmails = (val: string): string[] => {
+          if (!val || isNA(val)) return [];
+          return val.split(',').map((e: string) => e.trim().replace(/^"|"$/g, '')).filter(Boolean);
+        };
+        
         return {
-          company_name: row.company_name || row.company,
-          contact_name: row.contact_name || row.contact,
-          primary_email: row.primary_email || row.email,
-          cc_emails: row.cc_emails ? row.cc_emails.split(',').map((e: string) => e.trim()).filter(Boolean) : [],
-          plan_name: row.plan_name || row.plan,
-          renew_link: row.renew_link || row.link,
-          expires_on: row.expires_on || row.expires,
+          // Legacy fields (for backward compatibility)
+          company_name: row.company_name || row.company || '',
+          contact_name: row.contact_name || row.contact || '',
+          primary_email: row.primary_email || row.email || '',
+          cc_emails: parseCcEmails(row.cc_emails || ''),
+          plan_name: row.plan_name || row.plan || '',
+          renew_link: row.renew_link || row.link || '',
+          // New fields
+          distributor_name: isNA(row.distributor_name) ? '' : row.distributor_name,
+          distributor_contact_name: isNA(row.distributor_contact_name) ? '' : row.distributor_contact_name,
+          distributor_primary_email: isNA(row.distributor_primary_email) ? '' : row.distributor_primary_email,
+          reseller_name: isNA(row.reseller_name) ? '' : row.reseller_name,
+          reseller_contact_name: isNA(row.reseller_contact_name) ? '' : row.reseller_contact_name,
+          reseller_primary_email: isNA(row.reseller_primary_email) ? '' : row.reseller_primary_email,
+          reseller_cc_emails: parseCcEmails(row.reseller_cc_emails || ''),
+          end_user_company_name: row.end_user_company_name || '',
+          end_user_contact_name: row.end_user_contact_name || '',
+          end_user_primary_email: row.end_user_primary_email || '',
+          end_user_cc_emails: parseCcEmails(row.end_user_cc_emails || ''),
+          edition: row.edition || '',
+          licensing: row.licensing || '',
+          expires_on: row.expires_on || row.expires || '',
           paused: row.paused === 'true' || row.paused === '1',
         };
-      }).filter((row) => row.primary_email && row.expires_on);
+      }).filter((row) => {
+        // Filter: must have at least one email and expires_on
+        const hasEmail = row.distributor_primary_email || row.reseller_primary_email || row.end_user_primary_email || row.primary_email;
+        return hasEmail && row.expires_on;
+      });
 
       const result = await fetchJson<{ inserted: number; updated: number; reminders: number }>(
         '/api/customers/import',
@@ -683,7 +728,10 @@ export default function AdminPage() {
           <DialogContent className="max-w-2xl">
             <DialogTitle>Import CSV</DialogTitle>
             <DialogDescription>
-              Paste CSV data with headers: company_name, contact_name, primary_email, cc_emails, plan_name, renew_link, expires_on
+              Paste CSV data with headers: distributor_name, distributor_contact_name, distributor_primary_email, reseller_name, reseller_contact_name, reseller_primary_email, reseller_cc_emails, end_user_company_name, end_user_contact_name, end_user_primary_email, end_user_cc_emails, edition, licensing, expires_on
+              <br />
+              <br />
+              Use "Not Applicable" for fields that don't apply. The system will determine the recipient based on: distributor → reseller → end_user
             </DialogDescription>
             <form onSubmit={handleImport} className="space-y-4">
               <textarea

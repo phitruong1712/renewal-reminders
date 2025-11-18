@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import dayjs from 'dayjs';
 import { supabase } from '@/lib/supabaseServer';
 import { sendEmailRaw } from '@/lib/email';
+import { getRecipientInfo } from '@/lib/types';
 
 function authorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -27,7 +28,7 @@ export async function GET(req: Request) {
   const nowIso = new Date().toISOString();
   const { data: due, error } = await supabase
     .from('reminders')
-    .select('id, customer_id, scheduled_at, status, customers!inner(primary_email, cc_emails, company_name, contact_name, renew_link, expires_on, paused)')
+    .select('id, customer_id, scheduled_at, status, customers!inner(*)')
     .lte('scheduled_at', nowIso)
     .eq('status', 'pending');
 
@@ -39,18 +40,46 @@ export async function GET(req: Request) {
 
   for (const r of work as any[]) {
     const c = r.customers;
-    const to = c.primary_email as string;
-    const cc = (c.cc_emails ?? undefined) as string[] | undefined;
-    const subject = `Renewal reminder — expires ${dayjs(c.expires_on).format('YYYY-MM-DD')}`;
-    const body = [
-      `Hi ${c.contact_name ?? 'there'},`,
-      '',
-      `Your subscription for ${c.company_name ?? 'your account'} will expire on ${dayjs(c.expires_on).format('YYYY-MM-DD')}.`,
-      'Please renew before the date to avoid interruption.',
-      c.renew_link ? `Renew here: ${c.renew_link}` : undefined,
-      '',
-      'Thank you!',
-    ].filter(Boolean).join('\n');
+    const recipient = getRecipientInfo(c);
+    const to = recipient.email;
+    const cc = recipient.cc ?? undefined;
+    const expiresDate = c.expires_on ? dayjs(c.expires_on).format('YYYY-MM-DD') : 'Unknown date';
+    const daysLeft = c.expires_on ? dayjs(c.expires_on).diff(dayjs(), 'day') : 0;
+    
+    // Build subject based on relationship
+    let subject = `Renewal reminder — expires ${expiresDate}`;
+    if (daysLeft > 0) {
+      subject += ` (in ${daysLeft} day${daysLeft !== 1 ? 's' : ''})`;
+    } else if (daysLeft === 0) {
+      subject += ' (today)';
+    } else {
+      subject += ` (expired ${Math.abs(daysLeft)} day${Math.abs(daysLeft) !== 1 ? 's' : ''} ago)`;
+    }
+    
+    // Build body based on relationship
+    const contactName = recipient.name || 'there';
+    const companyName = recipient.company || 'your account';
+    const planName = c.edition || c.plan_name || 'your plan';
+    const licensing = c.licensing ? ` (${c.licensing})` : '';
+    
+    let body = `Hi ${contactName},\n\n`;
+    
+    if (recipient.relationship === 'distributor') {
+      body += `Your distributor agreement for ${companyName} will expire on ${expiresDate}.\n`;
+      body += `This affects the reseller and end-user relationships in your distribution chain.\n`;
+    } else if (recipient.relationship === 'reseller') {
+      body += `Your reseller agreement for ${companyName} will expire on ${expiresDate}.\n`;
+      body += `This affects the end-user customers you serve.\n`;
+    } else {
+      body += `Your subscription for ${companyName} (${planName}${licensing}) will expire on ${expiresDate}.\n`;
+    }
+    
+    body += `\n${daysLeft > 0 ? `That's in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}!` : daysLeft === 0 ? 'That\'s today!' : 'This has expired.'}\n`;
+    body += `\nPlease renew before the date to avoid interruption.\n`;
+    if (c.renew_link) {
+      body += `Renew here: ${c.renew_link}\n`;
+    }
+    body += `\nThank you!`;
 
     try {
       let msgId: string | undefined = undefined;

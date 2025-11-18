@@ -15,3 +15,7 @@ JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
 WHERE c.conrelid = 'customers'::regclass
   AND a.attname = 'primary_email';
 
+
+
+
+

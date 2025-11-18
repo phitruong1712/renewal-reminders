@@ -66,3 +66,7 @@ ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
 - `error` (text, nullable)
 - `sent_at` (timestamp, nullable)
 
+
+
+
+

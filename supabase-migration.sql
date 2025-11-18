@@ -25,3 +25,7 @@ CREATE TRIGGER update_customers_updated_at
 ALTER TABLE customers 
 ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
 
+
+
+
+
