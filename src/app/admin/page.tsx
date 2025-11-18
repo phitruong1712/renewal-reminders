@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { useToast } from '@/lib/toast';
 import { fetchJson } from '@/lib/fetchJson';
-import { Search, Plus, Upload, RefreshCw, Edit, Pause, Play } from 'lucide-react';
+import { Search, Plus, Upload, RefreshCw, Edit, Pause, Play, Mail } from 'lucide-react';
 import type { CustomerRow } from '@/lib/types';
 
 const PAGE_SIZE = 20;
@@ -254,6 +254,26 @@ export default function AdminPage() {
     }
   };
 
+  const handleSendTestEmail = async (customer: CustomerRow) => {
+    try {
+      const result = await fetchJson<{
+        ok: boolean;
+        message: string;
+        to: string;
+        cc: string[] | null;
+        subject: string;
+        messageId: string;
+      }>('/api/test-send-reminder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customer_id: customer.id }),
+      });
+      toast(`Test email sent to ${result.to}`, 'success');
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Failed to send test email', 'error');
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       company_name: '',
@@ -434,6 +454,14 @@ export default function AdminPage() {
                             onClick={() => openEditDialog(customer)}
                           >
                             <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleSendTestEmail(customer)}
+                            title="Send test reminder email"
+                          >
+                            <Mail className="w-4 h-4" />
                           </Button>
                           <Button
                             size="sm"
