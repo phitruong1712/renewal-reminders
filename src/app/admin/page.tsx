@@ -362,31 +362,34 @@ export default function AdminPage() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Company
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Relationship
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Contact
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Distributor
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Email
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Reseller
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Plan
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    End User
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Expires On
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Email (To)
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Last Reminder
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Edition
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Licensing
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Expires
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Paused
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
@@ -394,81 +397,144 @@ export default function AdminPage() {
               <tbody className="bg-white divide-y divide-gray-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={9} className="px-6 py-4 text-center text-gray-500">
+                    <td colSpan={10} className="px-6 py-4 text-center text-gray-500">
                       Loading...
                     </td>
                   </tr>
                 ) : customers.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-6 py-4 text-center text-gray-500">
+                    <td colSpan={10} className="px-6 py-4 text-center text-gray-500">
                       No customers found
                     </td>
                   </tr>
                 ) : (
                   customers.map((customer) => {
                     const status = getExpiryStatus(customer.expires_on);
+                    // Determine relationship and recipient
+                    const hasDistributor = customer.distributor_primary_email && 
+                      customer.distributor_primary_email.toLowerCase() !== 'not applicable' &&
+                      customer.distributor_primary_email.trim() !== '';
+                    const hasReseller = customer.reseller_primary_email && 
+                      customer.reseller_primary_email.toLowerCase() !== 'not applicable' &&
+                      customer.reseller_primary_email.trim() !== '';
+                    
+                    let relationship = 'End User';
+                    let recipientEmail = customer.primary_email;
+                    if (hasDistributor) {
+                      relationship = 'Distributor';
+                      recipientEmail = customer.distributor_primary_email || customer.primary_email;
+                    } else if (hasReseller) {
+                      relationship = 'Reseller';
+                      recipientEmail = customer.reseller_primary_email || customer.primary_email;
+                    }
+
                     return (
                       <tr key={customer.id} className="hover:bg-gray-50">
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                          {customer.company_name || '-'}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span className="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                            {relationship}
+                          </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {customer.contact_name || '-'}
+                        <td className="px-4 py-3 text-sm text-gray-700">
+                          {hasDistributor ? (
+                            <div>
+                              <div className="font-medium">{customer.distributor_name || '-'}</div>
+                              <div className="text-xs text-gray-500">{customer.distributor_contact_name || '-'}</div>
+                              <div className="text-xs text-gray-400">{customer.distributor_primary_email || '-'}</div>
+                            </div>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {customer.primary_email}
+                        <td className="px-4 py-3 text-sm text-gray-700">
+                          {hasReseller ? (
+                            <div>
+                              <div className="font-medium">{customer.reseller_name || '-'}</div>
+                              <div className="text-xs text-gray-500">{customer.reseller_contact_name || '-'}</div>
+                              <div className="text-xs text-gray-400">{customer.reseller_primary_email || '-'}</div>
+                            </div>
+                          ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {customer.plan_name || '-'}
+                        <td className="px-4 py-3 text-sm text-gray-700">
+                          <div>
+                            <div className="font-medium">{customer.end_user_company_name || customer.company_name || '-'}</div>
+                            <div className="text-xs text-gray-500">{customer.end_user_contact_name || customer.contact_name || '-'}</div>
+                            <div className="text-xs text-gray-400">{customer.end_user_primary_email || '-'}</div>
+                          </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {customer.expires_on ? dayjs(customer.expires_on).format('MMM D, YYYY') : '-'}
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                          <div className="font-medium">{recipientEmail}</div>
+                          {customer.reseller_cc_emails && customer.reseller_cc_emails.length > 0 && (
+                            <div className="text-xs text-gray-400">CC: {customer.reseller_cc_emails.join(', ')}</div>
+                          )}
+                          {customer.end_user_cc_emails && customer.end_user_cc_emails.length > 0 && (
+                            <div className="text-xs text-gray-400">CC: {customer.end_user_cc_emails.join(', ')}</div>
+                          )}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {customer.last_reminder_sent_at
-                            ? dayjs(customer.last_reminder_sent_at).format('MMM D, YYYY')
-                            : '-'}
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                          {customer.edition || customer.plan_name || '-'}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
+                        <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                          {customer.licensing || '-'}
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="text-sm text-gray-500">
+                            {customer.expires_on ? dayjs(customer.expires_on).format('MMM D, YYYY') : '-'}
+                          </div>
                           <span className={`px-2 py-1 text-xs font-semibold rounded-full ${status.class}`}>
                             {status.text}
                           </span>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => handlePause(customer, !customer.paused)}
-                          >
-                            {customer.paused ? (
-                              <Play className="w-4 h-4" />
-                            ) : (
-                              <Pause className="w-4 h-4" />
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handlePause(customer, !customer.paused)}
+                              title={customer.paused ? 'Unpause' : 'Pause'}
+                            >
+                              {customer.paused ? (
+                                <Play className="w-4 h-4 text-green-600" />
+                              ) : (
+                                <Pause className="w-4 h-4 text-gray-400" />
+                              )}
+                            </Button>
+                            {customer.last_reminder_sent_at && (
+                              <span className="text-xs text-gray-400">
+                                {dayjs(customer.last_reminder_sent_at).format('MMM D')}
+                              </span>
                             )}
-                          </Button>
+                          </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openEditDialog(customer)}
-                          >
-                            <Edit className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleSendTestEmail(customer)}
-                            title="Send test reminder email"
-                          >
-                            <Mail className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            size="sm"
-                            onClick={() => openRenewDialog(customer)}
-                          >
-                            Renew
-                          </Button>
+                        <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
+                          <div className="flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openEditDialog(customer)}
+                              title="Edit"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleSendTestEmail(customer)}
+                              title="Send test reminder email"
+                              className="bg-blue-50 hover:bg-blue-100 border-blue-200"
+                            >
+                              <Mail className="w-4 h-4 text-blue-600" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => openRenewDialog(customer)}
+                              title="Renew"
+                            >
+                              Renew
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     );
