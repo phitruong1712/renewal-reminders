@@ -45,3 +45,5 @@ SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 The `service_role` key has admin access - keep it secret!
 
+
+

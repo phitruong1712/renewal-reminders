@@ -1,0 +1,5 @@
+distributor_name,distributor_contact_name,distributor_primary_email,reseller_name,reseller_contact_name,reseller_primary_email,reseller_cc_emails,end_user_company_name,end_user_contact_name,end_user_primary_email,end_user_cc_emails,edition,licensing,expires_on,paused
+Not Applicable,Not Applicable,Not Applicable,Not Applicable,Not Applicable,Not Applicable,Not Applicable,Example Test,Phi,phitruong1712@gmail.com,"truongphiace@gmail.com, phitruong1712@icloud.com",Enterprise Plus,Subscription for 50 workloads,2025-12-17,false
+Not Applicable,Not Applicable,Not Applicable,"PT. MARTUNAS TAMITA INDONESIA",Zulfikar,zulfikar.jafar@mti.co.id,phitruong1712@gmail.com,PT. Andalan Furnindo,Andreas Agung,andreasa@afsugar.com,"itsupport@afsugar.com, phitruong1712@gmail.com",Pro Essentials,4 CPU sockets for VM backup,2025-12-04,false
+,,,PT. MARTUNAS TAMITA INDONESIA, Lee,LZY@mightresources.com,Not Applicable,Mapo Industries Sdn. Bhd.,Sam Tan,IT@mapo.com.my,Not Applicable,Enterprise Essentials,2 CPU sockets for VM backup,2025-12-06,false
+
