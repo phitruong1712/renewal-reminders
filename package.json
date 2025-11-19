@@ -7,7 +7,8 @@
     "start": "next start",
     "lint": "next lint",
     "import-csv": "tsx scripts/import-csv.ts",
-    "replace-all": "tsx scripts/replace-all-customers.ts"
+    "replace-all": "tsx scripts/replace-all-customers.ts",
+    "sync-supabase": "tsx scripts/import-from-supabase-csv.ts"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.0.5",

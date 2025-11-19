@@ -1,0 +1,2 @@
+id,customer_id,offset_days,scheduled_at,sent_at,status,provider_message_id
+71,,,,,pending,

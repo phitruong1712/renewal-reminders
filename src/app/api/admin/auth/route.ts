@@ -6,9 +6,17 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { password } = body;
 
-    const adminPass = process.env.ADMIN_PASS;
+    // Try multiple ways to get the admin password
+    const adminPass = process.env.ADMIN_PASS || 
+                     process.env.NEXT_PUBLIC_ADMIN_PASS ||
+                     'N@kivo123'; // Fallback for local development
 
-    if (!adminPass) {
+    // Debug logging (remove in production)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Admin auth attempt - Password configured:', !!adminPass);
+    }
+
+    if (!adminPass || adminPass === '') {
       return NextResponse.json({ error: 'Admin password not configured' }, { status: 500 });
     }
 

@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { useToast } from '@/lib/toast';
 import { fetchJson } from '@/lib/fetchJson';
-import { Search, Plus, Upload, RefreshCw, Edit, Pause, Play, Mail } from 'lucide-react';
+import { Search, Plus, Upload, RefreshCw, Edit, Pause, Play, Mail, Database } from 'lucide-react';
 import type { CustomerRow } from '@/lib/types';
 
 const PAGE_SIZE = 20;
@@ -274,6 +274,30 @@ export default function AdminPage() {
     }
   };
 
+  const handleSyncSupabase = async () => {
+    if (!confirm('This will replace all existing data with data from Supabase CSV files. Continue?')) {
+      return;
+    }
+    try {
+      setLoading(true);
+      const result = await fetchJson<{
+        ok: boolean;
+        inserted: number;
+        updated: number;
+        errors: number;
+        message: string;
+      }>('/api/sync-supabase', {
+        method: 'POST',
+      });
+      toast(result.message || `Synced ${result.inserted + result.updated} customers`, 'success');
+      fetchCustomers();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Failed to sync from Supabase', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const resetForm = () => {
     setFormData({
       company_name: '',
@@ -336,6 +360,10 @@ export default function AdminPage() {
             <Button onClick={() => setShowImportDialog(true)} variant="outline">
               <Upload className="w-4 h-4 mr-2" />
               Import CSV
+            </Button>
+            <Button onClick={handleSyncSupabase} variant="outline" className="bg-green-50 hover:bg-green-100 border-green-200">
+              <Database className="w-4 h-4 mr-2" />
+              Sync from Supabase
             </Button>
             <Button onClick={fetchCustomers} variant="ghost">
               <RefreshCw className="w-4 h-4 mr-2" />
