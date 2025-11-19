@@ -40,18 +40,56 @@ function parseCcEmails(val: string): string[] | null {
 
 export async function POST(request: NextRequest) {
   try {
-    const supabaseDir = path.join(process.cwd(), 'Supabase');
-    const customersPath = path.join(supabaseDir, 'customers_rows.csv');
-
-    if (!fs.existsSync(customersPath)) {
+    // Check Supabase client
+    if (!supabase) {
       return NextResponse.json(
-        { error: 'customers_rows.csv not found in Supabase folder' },
+        { error: 'Supabase client not initialized. Check environment variables.' },
+        { status: 500 }
+      );
+    }
+
+    // Try multiple possible paths
+    const possiblePaths = [
+      path.join(process.cwd(), 'Supabase', 'customers_rows.csv'),
+      path.join(process.cwd(), '..', 'Supabase', 'customers_rows.csv'),
+      path.resolve(process.cwd(), 'Supabase', 'customers_rows.csv'),
+    ];
+
+    let customersPath: string | null = null;
+    for (const testPath of possiblePaths) {
+      if (fs.existsSync(testPath)) {
+        customersPath = testPath;
+        break;
+      }
+    }
+
+    if (!customersPath) {
+      console.error('CSV file not found. Tried paths:', possiblePaths);
+      console.error('Current working directory:', process.cwd());
+      return NextResponse.json(
+        { 
+          error: 'customers_rows.csv not found in Supabase folder',
+          triedPaths: possiblePaths,
+          cwd: process.cwd()
+        },
         { status: 404 }
       );
     }
 
+    console.log('Reading CSV from:', customersPath);
+
     // Read and parse CSV
-    const content = fs.readFileSync(customersPath, 'utf-8');
+    let content: string;
+    try {
+      content = fs.readFileSync(customersPath, 'utf-8');
+    } catch (readError: any) {
+      console.error('Failed to read CSV file:', readError);
+      return NextResponse.json(
+        { error: `Failed to read CSV file: ${readError.message}` },
+        { status: 500 }
+      );
+    }
+
     const lines = content.split('\n').filter((line) => line.trim());
     
     if (lines.length < 2) {
@@ -59,14 +97,61 @@ export async function POST(request: NextRequest) {
     }
 
     const headers = parseCSVLine(lines[0]).map((h) => h.trim().toLowerCase());
+    console.log(`Found ${lines.length - 1} rows to process`);
+    
     let inserted = 0;
     let updated = 0;
     let errors = 0;
 
+    // Test Supabase connection first with better error handling
+    let testError: any = null;
+    try {
+      const { error, data } = await supabase.from('customers').select('id').limit(1);
+      testError = error;
+      if (error) {
+        console.error('Supabase connection error:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+      } else {
+        console.log('Supabase connection successful');
+      }
+    } catch (fetchError: any) {
+      console.error('Supabase fetch failed:', {
+        message: fetchError.message,
+        name: fetchError.name,
+        cause: fetchError.cause,
+      });
+      return NextResponse.json(
+        { 
+          error: `Supabase connection failed: ${fetchError.message || 'Network error'}`,
+          details: process.env.NODE_ENV === 'development' ? {
+            type: fetchError.name,
+            message: fetchError.message,
+          } : undefined,
+        },
+        { status: 500 }
+      );
+    }
+
+    if (testError) {
+      return NextResponse.json(
+        { 
+          error: `Supabase connection failed: ${testError.message}`,
+          details: testError.details || testError.hint,
+        },
+        { status: 500 }
+      );
+    }
+
     // Clear existing data
+    console.log('Clearing existing data...');
     await supabase.from('send_logs').delete().neq('id', 0);
     await supabase.from('reminders').delete().neq('id', 0);
     await supabase.from('customers').delete().neq('id', 0);
+    console.log('Existing data cleared');
 
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -121,20 +206,29 @@ export async function POST(request: NextRequest) {
             .from('customers')
             .update(customerData)
             .eq('id', existing.id);
-          if (error) throw error;
+          if (error) {
+            console.error(`Update error for row ${i + 1}:`, error);
+            throw error;
+          }
           updated++;
         } else {
           const { error } = await supabase
             .from('customers')
             .insert(customerData);
-          if (error) throw error;
+          if (error) {
+            console.error(`Insert error for row ${i + 1}:`, error);
+            throw error;
+          }
           inserted++;
         }
       } catch (error: any) {
-        console.error(`Row ${i + 1} error:`, error.message);
+        console.error(`Row ${i + 1} error:`, error.message || error);
         errors++;
+        // Continue processing other rows
       }
     }
+
+    console.log(`Import complete: ${inserted} inserted, ${updated} updated, ${errors} errors`);
 
     return NextResponse.json({
       ok: true,
@@ -145,8 +239,14 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     console.error('Sync error:', error);
+    const errorMessage = error?.message || error?.toString() || 'Failed to sync from Supabase CSV';
+    const errorStack = error?.stack;
+    
     return NextResponse.json(
-      { error: error.message || 'Failed to sync from Supabase CSV' },
+      { 
+        error: errorMessage,
+        details: process.env.NODE_ENV === 'development' ? errorStack : undefined
+      },
       { status: 500 }
     );
   }
