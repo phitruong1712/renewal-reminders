@@ -23,6 +23,9 @@ export default function AdminPage() {
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showRenewDialog, setShowRenewDialog] = useState(false);
+  const [showSendReminderDialog, setShowSendReminderDialog] = useState(false);
+  const [selectedStage, setSelectedStage] = useState(1);
+  const [selectedParties, setSelectedParties] = useState<string[]>(['end_user', 'reseller', 'distributor']);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
   const [formData, setFormData] = useState({
     company_name: '',
@@ -127,7 +130,7 @@ export default function AdminPage() {
     try {
       const lines = importData.split('\n').filter((line) => line.trim());
       const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-      
+
       const rows = lines.slice(1).map((line) => {
         // Handle CSV with quoted values (including commas inside quotes)
         const values: string[] = [];
@@ -145,21 +148,21 @@ export default function AdminPage() {
           }
         }
         values.push(current.trim()); // Add last value
-        
+
         const row: any = {};
         headers.forEach((header, index) => {
           row[header] = values[index] || '';
         });
-        
+
         // Helper to check if value is "Not Applicable"
         const isNA = (val: string) => !val || val.toLowerCase() === 'not applicable' || val.trim() === '';
-        
+
         // Helper to parse CC emails
         const parseCcEmails = (val: string): string[] => {
           if (!val || isNA(val)) return [];
           return val.split(',').map((e: string) => e.trim().replace(/^"|"$/g, '')).filter(Boolean);
         };
-        
+
         return {
           // Legacy fields (for backward compatibility)
           company_name: row.company_name || row.company || '',
@@ -272,6 +275,44 @@ export default function AdminPage() {
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Failed to send test email', 'error');
     }
+  };
+
+  const handleSendReminderOnDemand = async () => {
+    if (!selectedCustomer) return;
+    try {
+      const result = await fetchJson<{
+        ok: boolean;
+        message: string;
+        results: any[];
+      }>('/api/send-reminder-on-demand', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_id: selectedCustomer.id,
+          stage: selectedStage,
+          parties: selectedParties
+        }),
+      });
+      toast(result.message || 'Reminders sent successfully', 'success');
+      setShowSendReminderDialog(false);
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Failed to send reminders', 'error');
+    }
+  };
+
+  const openSendReminderDialog = (customer: CustomerRow) => {
+    setSelectedCustomer(customer);
+    setSelectedStage(1);
+    setSelectedParties(['end_user', 'reseller', 'distributor']);
+    setShowSendReminderDialog(true);
+  };
+
+  const toggleParty = (party: string) => {
+    setSelectedParties(prev =>
+      prev.includes(party)
+        ? prev.filter(p => p !== party)
+        : [...prev, party]
+    );
   };
 
   const handleSyncSupabase = async () => {
@@ -439,13 +480,13 @@ export default function AdminPage() {
                   customers.map((customer) => {
                     const status = getExpiryStatus(customer.expires_on);
                     // Determine relationship and recipient
-                    const hasDistributor = customer.distributor_primary_email && 
+                    const hasDistributor = customer.distributor_primary_email &&
                       customer.distributor_primary_email.toLowerCase() !== 'not applicable' &&
                       customer.distributor_primary_email.trim() !== '';
-                    const hasReseller = customer.reseller_primary_email && 
+                    const hasReseller = customer.reseller_primary_email &&
                       customer.reseller_primary_email.toLowerCase() !== 'not applicable' &&
                       customer.reseller_primary_email.trim() !== '';
-                    
+
                     let relationship = 'End User';
                     let recipientEmail = customer.primary_email;
                     if (hasDistributor) {
@@ -549,8 +590,8 @@ export default function AdminPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleSendTestEmail(customer)}
-                              title="Send test reminder email"
+                              onClick={() => openSendReminderDialog(customer)}
+                              title="Send reminder on demand"
                               className="bg-blue-50 hover:bg-blue-100 border-blue-200"
                             >
                               <Mail className="w-4 h-4 text-blue-600" />
@@ -870,6 +911,82 @@ export default function AdminPage() {
                 <Button type="submit">Import</Button>
               </div>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Send Reminder On Demand Dialog */}
+        <Dialog open={showSendReminderDialog} onOpenChange={setShowSendReminderDialog}>
+          <DialogContent>
+            <DialogTitle>Send Reminder On Demand</DialogTitle>
+            <DialogDescription>
+              Send a specific reminder stage to {selectedCustomer?.primary_email}
+            </DialogDescription>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Parties to Send To
+                </label>
+                <div className="space-y-2">
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedParties.includes('end_user')}
+                      onChange={() => toggleParty('end_user')}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-sm">End User</span>
+                  </label>
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedParties.includes('reseller')}
+                      onChange={() => toggleParty('reseller')}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-sm">Reseller</span>
+                  </label>
+                  <label className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedParties.includes('distributor')}
+                      onChange={() => toggleParty('distributor')}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-sm">Distributor</span>
+                  </label>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select Reminder Stage
+                </label>
+                <div className="grid grid-cols-5 gap-2">
+                  {[1, 2, 3, 4, 5].map((stage) => (
+                    <button
+                      key={stage}
+                      onClick={() => setSelectedStage(stage)}
+                      className={`px-4 py-2 rounded border ${selectedStage === stage
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                        }`}
+                    >
+                      {stage}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 text-xs text-gray-500">
+                  <p>1: Immediate | 2: -30 days | 3: -7 days | 4: Expiration | 5: +7 days</p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowSendReminderDialog(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSendReminderOnDemand} disabled={selectedParties.length === 0}>
+                  Send Reminder
+                </Button>
+              </div>
+            </div>
           </DialogContent>
         </Dialog>
       </div>

@@ -100,3 +100,6 @@ Since your Vercel deployment works, you can:
 - All Supabase connections will work from Vercel
 - Sync data via the deployed app
 
+
+
+
