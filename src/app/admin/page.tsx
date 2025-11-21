@@ -23,6 +23,9 @@ export default function AdminPage() {
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [showRenewDialog, setShowRenewDialog] = useState(false);
+  const [showReminderDialog, setShowReminderDialog] = useState(false);
+  const [reminderStage, setReminderStage] = useState(1);
+  const [reminderParties, setReminderParties] = useState<string[]>(['end_user', 'reseller', 'distributor']);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerRow | null>(null);
   const [formData, setFormData] = useState({
     company_name: '',
@@ -127,7 +130,7 @@ export default function AdminPage() {
     try {
       const lines = importData.split('\n').filter((line) => line.trim());
       const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-      
+
       const rows = lines.slice(1).map((line) => {
         // Handle CSV with quoted values (including commas inside quotes)
         const values: string[] = [];
@@ -145,21 +148,21 @@ export default function AdminPage() {
           }
         }
         values.push(current.trim()); // Add last value
-        
+
         const row: any = {};
         headers.forEach((header, index) => {
           row[header] = values[index] || '';
         });
-        
+
         // Helper to check if value is "Not Applicable"
         const isNA = (val: string) => !val || val.toLowerCase() === 'not applicable' || val.trim() === '';
-        
+
         // Helper to parse CC emails
         const parseCcEmails = (val: string): string[] => {
           if (!val || isNA(val)) return [];
           return val.split(',').map((e: string) => e.trim().replace(/^"|"$/g, '')).filter(Boolean);
         };
-        
+
         return {
           // Legacy fields (for backward compatibility)
           company_name: row.company_name || row.company || '',
@@ -254,24 +257,34 @@ export default function AdminPage() {
     }
   };
 
-  const handleSendTestEmail = async (customer: CustomerRow) => {
+  const handleSendReminder = async () => {
+    if (!selectedCustomer) return;
     try {
       const result = await fetchJson<{
         ok: boolean;
         message: string;
-        to: string;
-        cc: string[] | null;
-        subject: string;
-        messageId: string;
-      }>('/api/test-send-reminder', {
+        results: any[];
+      }>('/api/send-reminder-on-demand', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customer_id: customer.id }),
+        body: JSON.stringify({
+          customer_id: selectedCustomer.id,
+          stage: reminderStage,
+          parties: reminderParties,
+        }),
       });
-      toast(`Test email sent to ${result.to}`, 'success');
+      toast(result.message, 'success');
+      setShowReminderDialog(false);
     } catch (error) {
-      toast(error instanceof Error ? error.message : 'Failed to send test email', 'error');
+      toast(error instanceof Error ? error.message : 'Failed to send reminder', 'error');
     }
+  };
+
+  const openReminderDialog = (customer: CustomerRow) => {
+    setSelectedCustomer(customer);
+    setReminderStage(1);
+    setReminderParties(['end_user', 'reseller', 'distributor']);
+    setShowReminderDialog(true);
   };
 
   const handleSyncSupabase = async () => {
@@ -439,13 +452,13 @@ export default function AdminPage() {
                   customers.map((customer) => {
                     const status = getExpiryStatus(customer.expires_on);
                     // Determine relationship and recipient
-                    const hasDistributor = customer.distributor_primary_email && 
+                    const hasDistributor = customer.distributor_primary_email &&
                       customer.distributor_primary_email.toLowerCase() !== 'not applicable' &&
                       customer.distributor_primary_email.trim() !== '';
-                    const hasReseller = customer.reseller_primary_email && 
+                    const hasReseller = customer.reseller_primary_email &&
                       customer.reseller_primary_email.toLowerCase() !== 'not applicable' &&
                       customer.reseller_primary_email.trim() !== '';
-                    
+
                     let relationship = 'End User';
                     let recipientEmail = customer.primary_email;
                     if (hasDistributor) {
@@ -469,6 +482,9 @@ export default function AdminPage() {
                               <div className="font-medium">{customer.distributor_name || '-'}</div>
                               <div className="text-xs text-gray-500">{customer.distributor_contact_name || '-'}</div>
                               <div className="text-xs text-gray-400">{customer.distributor_primary_email || '-'}</div>
+                              {customer.distributor_cc_emails && customer.distributor_cc_emails.length > 0 && (
+                                <div className="text-xs text-gray-400">CC: {customer.distributor_cc_emails.join(', ')}</div>
+                              )}
                             </div>
                           ) : (
                             <span className="text-gray-400">-</span>
@@ -494,6 +510,9 @@ export default function AdminPage() {
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
                           <div className="font-medium">{recipientEmail}</div>
+                          {customer.distributor_cc_emails && customer.distributor_cc_emails.length > 0 && (
+                            <div className="text-xs text-gray-400">CC: {customer.distributor_cc_emails.join(', ')}</div>
+                          )}
                           {customer.reseller_cc_emails && customer.reseller_cc_emails.length > 0 && (
                             <div className="text-xs text-gray-400">CC: {customer.reseller_cc_emails.join(', ')}</div>
                           )}
@@ -549,8 +568,8 @@ export default function AdminPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => handleSendTestEmail(customer)}
-                              title="Send test reminder email"
+                              onClick={() => openReminderDialog(customer)}
+                              title="Send reminder email"
                               className="bg-blue-50 hover:bg-blue-100 border-blue-200"
                             >
                               <Mail className="w-4 h-4 text-blue-600" />
@@ -799,54 +818,108 @@ export default function AdminPage() {
             <DialogDescription>
               Renew {selectedCustomer?.company_name || selectedCustomer?.primary_email}
             </DialogDescription>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-2">
-                <Button onClick={() => handleRenew('+6m')} variant="outline">
-                  +6 Months
+            <div className="space-y-4 pt-4">
+              <div className="grid grid-cols-2 gap-4">
+                <Button onClick={() => handleRenew('1 year')} variant="outline">
+                  1 Year
                 </Button>
-                <Button onClick={() => handleRenew('+12m')} variant="outline">
-                  +12 Months
+                <Button onClick={() => handleRenew('2 years')} variant="outline">
+                  2 Years
                 </Button>
-                <Button onClick={() => handleRenew('+24m')} variant="outline">
-                  +24 Months
+                <Button onClick={() => handleRenew('3 years')} variant="outline">
+                  3 Years
                 </Button>
-                <Button onClick={() => handleRenew('+1y')} variant="outline">
-                  +1 Year
+                <Button onClick={() => handleRenew('5 years')} variant="outline">
+                  5 Years
                 </Button>
               </div>
               <div className="border-t pt-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Custom Date (YYYY-MM-DD)
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Custom Date
                 </label>
-                <Input
-                  type="date"
-                  id="custom-date"
-                  className="mb-2"
-                />
-                <Button
-                  onClick={() => {
-                    const dateInput = document.getElementById('custom-date') as HTMLInputElement;
-                    if (dateInput?.value) {
-                      handleRenewCustom(dateInput.value);
-                    }
-                  }}
-                  variant="outline"
-                  className="w-full"
-                >
-                  Renew to Custom Date
-                </Button>
+                <div className="flex gap-2">
+                  <Input
+                    type="date"
+                    onChange={(e) => {
+                      if (e.target.value) handleRenewCustom(e.target.value);
+                    }}
+                  />
+                </div>
               </div>
-              <div className="flex justify-end">
-                <Button variant="outline" onClick={() => setShowRenewDialog(false)}>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Send Reminder Dialog */}
+        <Dialog open={showReminderDialog} onOpenChange={setShowReminderDialog}>
+          <DialogContent>
+            <DialogTitle>Send Reminder</DialogTitle>
+            <DialogDescription>
+              Send a manual reminder to {selectedCustomer?.company_name || selectedCustomer?.primary_email}
+            </DialogDescription>
+            <div className="space-y-6 pt-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Reminder Stage
+                </label>
+                <div className="flex gap-2">
+                  {[1, 2, 3, 4, 5].map((stage) => (
+                    <Button
+                      key={stage}
+                      type="button"
+                      variant={reminderStage === stage ? 'default' : 'outline'}
+                      onClick={() => setReminderStage(stage)}
+                      className="flex-1"
+                    >
+                      {stage}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Recipients
+                </label>
+                <div className="space-y-2">
+                  {['end_user', 'reseller', 'distributor'].map((party) => (
+                    <div key={party} className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id={`party-${party}`}
+                        checked={reminderParties.includes(party)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setReminderParties([...reminderParties, party]);
+                          } else {
+                            setReminderParties(reminderParties.filter((p) => p !== party));
+                          }
+                        }}
+                        className="mr-2"
+                      />
+                      <label htmlFor={`party-${party}`} className="text-sm text-gray-700 capitalize">
+                        {party.replace('_', ' ')}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setShowReminderDialog(false)}>
                   Cancel
+                </Button>
+                <Button onClick={handleSendReminder} disabled={reminderParties.length === 0}>
+                  Send Reminder
                 </Button>
               </div>
             </div>
           </DialogContent>
         </Dialog>
 
+
         {/* Import Dialog */}
-        <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
+        < Dialog open={showImportDialog} onOpenChange={setShowImportDialog} >
           <DialogContent className="max-w-2xl">
             <DialogTitle>Import CSV</DialogTitle>
             <DialogDescription>
@@ -871,8 +944,8 @@ export default function AdminPage() {
               </div>
             </form>
           </DialogContent>
-        </Dialog>
-      </div>
-    </div>
+        </Dialog >
+      </div >
+    </div >
   );
 }

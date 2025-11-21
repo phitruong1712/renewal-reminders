@@ -17,6 +17,7 @@ const customerInputSchema = z.object({
   distributor_name: z.string().optional(),
   distributor_contact_name: z.string().optional(),
   distributor_primary_email: z.string().email().optional(),
+  distributor_cc_emails: z.array(z.string().email()).optional(),
   reseller_name: z.string().optional(),
   reseller_contact_name: z.string().optional(),
   reseller_primary_email: z.string().email().optional(),
@@ -33,7 +34,7 @@ const customerInputSchema = z.object({
 
 async function recreateReminders(customerId: number, expiresOn: string) {
   const offsets = parseOffsets();
-  
+
   // Delete existing pending reminders
   await supabase
     .from('reminders')

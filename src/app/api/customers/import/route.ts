@@ -33,7 +33,7 @@ const customerInputSchema = z.object({
 
 async function recreateReminders(customerId: number, expiresOn: string) {
   const offsets = parseOffsets();
-  
+
   await supabase
     .from('reminders')
     .delete()
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
         // Priority: distributor > reseller > end_user
         let primaryEmail: string;
         let normalizedEmail: string;
-        
+
         if (
           row.distributor_primary_email &&
           !isNotApplicable(row.distributor_primary_email)
@@ -116,11 +116,11 @@ export async function POST(request: NextRequest) {
         const endUserCcEmails = normalizeCcEmails(row.end_user_cc_emails);
         const legacyCcEmails = normalizeCcEmails(row.cc_emails);
 
-        // Check if customer exists (by primary_email)
+        // Check if customer exists (by end_user_primary_email)
         const { data: existing } = await supabase
           .from('customers')
           .select('id')
-          .eq('primary_email', normalizedEmail)
+          .eq('end_user_primary_email', row.end_user_primary_email ? normalizeEmail(row.end_user_primary_email) : normalizedEmail)
           .maybeSingle();
 
         let customer;

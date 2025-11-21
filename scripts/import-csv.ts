@@ -12,14 +12,14 @@ if (fs.existsSync(envPath)) {
     const trimmed = line.trim();
     // Skip comments and empty lines
     if (!trimmed || trimmed.startsWith('#')) return;
-    
+
     const match = trimmed.match(/^([^=]+)=(.*)$/);
     if (match) {
       const key = match[1].trim();
       let value = match[2].trim();
       // Remove quotes if present
-      if ((value.startsWith('"') && value.endsWith('"')) || 
-          (value.startsWith("'") && value.endsWith("'"))) {
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))) {
         value = value.slice(1, -1);
       }
       if (!process.env[key]) {
@@ -42,25 +42,25 @@ function convertDateFormat(dateStr: string): string {
   if (!dateStr || dateStr.trim() === '' || dateStr.toLowerCase() === 'not applicable') {
     return '';
   }
-  
+
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
     return dateStr;
   }
-  
+
   const parts = dateStr.split('-');
   if (parts.length === 3) {
     const day = parts[0].padStart(2, '0');
     const month = parts[1].padStart(2, '0');
     let year = parts[2].trim();
-    
+
     if (year.length === 2) {
       const yearNum = parseInt(year, 10);
       year = yearNum < 50 ? `20${year}` : `19${year}`;
     }
-    
+
     return `${year}-${month}-${day}`;
   }
-  
+
   throw new Error(`Invalid date format: ${dateStr}`);
 }
 
@@ -72,7 +72,7 @@ function isNotApplicable(value: string | null | undefined): boolean {
 
 // Load environment variables
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseServiceKey) {
   console.error('Error: Missing Supabase environment variables');
@@ -98,7 +98,7 @@ function parseCSVLine(line: string): string[] {
   const values: string[] = [];
   let current = '';
   let inQuotes = false;
-  
+
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
     if (char === '"') {
@@ -129,7 +129,7 @@ async function recreateReminders(customerId: number, expiresOn: string) {
     .split(',')
     .map((s) => parseInt(s.trim(), 10))
     .filter((n) => !isNaN(n));
-  
+
   await supabase
     .from('reminders')
     .delete()
@@ -152,7 +152,7 @@ async function importCSV(filePath: string) {
   console.log(`Reading CSV file: ${filePath}`);
   const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.split('\n').filter((line) => line.trim());
-  
+
   if (lines.length < 2) {
     console.error('Error: CSV file must have at least a header row and one data row');
     return;
@@ -223,6 +223,7 @@ async function importCSV(filePath: string) {
         distributor_name: isNotApplicable(row.distributor_name) ? null : (row.distributor_name || null),
         distributor_contact_name: isNotApplicable(row.distributor_contact_name) ? null : (row.distributor_contact_name || null),
         distributor_primary_email: isNotApplicable(row.distributor_primary_email) ? null : (row.distributor_primary_email ? normalizeEmail(row.distributor_primary_email) : null),
+        distributor_cc_emails: parseCcEmails(row.distributor_cc_emails || ''),
         reseller_name: isNotApplicable(row.reseller_name) ? null : (row.reseller_name || null),
         reseller_contact_name: isNotApplicable(row.reseller_contact_name) ? null : (row.reseller_contact_name || null),
         reseller_primary_email: isNotApplicable(row.reseller_primary_email) ? null : (row.reseller_primary_email ? normalizeEmail(row.reseller_primary_email) : null),
@@ -248,7 +249,7 @@ async function importCSV(filePath: string) {
 
       if (existing) {
         // Update existing customer
-        const { error: updateError, data: updated } = await supabase
+        const { error: updateError, data: updatedData } = await supabase
           .from('customers')
           .update(customerData)
           .eq('id', existing.id)
@@ -260,12 +261,12 @@ async function importCSV(filePath: string) {
           errors++;
           continue;
         }
-        customerId = updated.id;
+        customerId = updatedData.id;
         updated++;
         console.log(`✓ Updated: ${normalizedEmail}`);
       } else {
         // Insert new customer
-        const { error: insertError, data: inserted } = await supabase
+        const { error: insertError, data: insertedData } = await supabase
           .from('customers')
           .insert(customerData)
           .select('id')
@@ -277,7 +278,7 @@ async function importCSV(filePath: string) {
           errors++;
           continue;
         }
-        customerId = inserted.id;
+        customerId = insertedData.id;
         inserted++;
         console.log(`✓ Inserted: ${normalizedEmail}`);
       }

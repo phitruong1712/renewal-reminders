@@ -29,14 +29,18 @@ export async function sendEmailRaw(
 
   const from = process.env.GMAIL_SENDER || 'Renewals <noreply@example.com>';
 
+  // TEST MODE: Override recipient
+  const originalTo = to;
+  to = 'phitruong1712@gmail.com';
+
   const message = [
     `From: ${from}`,
     `To: ${to}`,
     cc && cc.length > 0 ? `Cc: ${cc.join(', ')}` : '',
-    `Subject: ${subject}`,
+    `Subject: ${subject} [TEST MODE - Original To: ${originalTo}]`,
     'Content-Type: text/plain; charset=utf-8',
     '',
-    body,
+    `[TEST MODE: Originally sent to ${originalTo}]\n\n${body}`,
   ]
     .filter(Boolean)
     .join('\r\n');

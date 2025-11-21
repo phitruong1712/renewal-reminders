@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
       console.error('CSV file not found. Tried paths:', possiblePaths);
       console.error('Current working directory:', process.cwd());
       return NextResponse.json(
-        { 
+        {
           error: 'customers_rows.csv not found in Supabase folder',
           triedPaths: possiblePaths,
           cwd: process.cwd()
@@ -91,14 +91,14 @@ export async function POST(request: NextRequest) {
     }
 
     const lines = content.split('\n').filter((line) => line.trim());
-    
+
     if (lines.length < 2) {
       return NextResponse.json({ error: 'No data in CSV' }, { status: 400 });
     }
 
     const headers = parseCSVLine(lines[0]).map((h) => h.trim().toLowerCase());
     console.log(`Found ${lines.length - 1} rows to process`);
-    
+
     let inserted = 0;
     let updated = 0;
     let errors = 0;
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
         cause: fetchError.cause,
       });
       return NextResponse.json(
-        { 
+        {
           error: `Supabase connection failed: ${fetchError.message || 'Network error'}`,
           details: process.env.NODE_ENV === 'development' ? {
             type: fetchError.name,
@@ -138,7 +138,7 @@ export async function POST(request: NextRequest) {
 
     if (testError) {
       return NextResponse.json(
-        { 
+        {
           error: `Supabase connection failed: ${testError.message}`,
           details: testError.details || testError.hint,
         },
@@ -194,11 +194,11 @@ export async function POST(request: NextRequest) {
           paused: row.paused === 'true' || row.paused === '1' || row.paused === 't' || false,
         };
 
-        // Check if exists
+        // Check if exists (by end_user_primary_email)
         const { data: existing } = await supabase
           .from('customers')
           .select('id')
-          .eq('primary_email', normalizedEmail)
+          .eq('end_user_primary_email', row.end_user_primary_email ? normalizeEmail(row.end_user_primary_email) : normalizedEmail) // Fallback to normalizedEmail if end_user not present, but ideally should be present
           .maybeSingle();
 
         if (existing) {
@@ -241,9 +241,9 @@ export async function POST(request: NextRequest) {
     console.error('Sync error:', error);
     const errorMessage = error?.message || error?.toString() || 'Failed to sync from Supabase CSV';
     const errorStack = error?.stack;
-    
+
     return NextResponse.json(
-      { 
+      {
         error: errorMessage,
         details: process.env.NODE_ENV === 'development' ? errorStack : undefined
       },

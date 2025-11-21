@@ -5,7 +5,7 @@ import { getDbConfig } from './dbConfig';
 let dbConfig;
 try {
   dbConfig = getDbConfig();
-  
+
   // Log connection info (without password) for debugging
   if (process.env.NODE_ENV !== 'production') {
     console.log('PostgreSQL connection config:', {
@@ -30,7 +30,7 @@ const poolConfig = {
   ...dbConfig,
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 10000,
 };
 
 const pool = new Pool(poolConfig);
@@ -223,7 +223,7 @@ class QueryBuilder {
 
       const selectClause = this.selectFields.join(', ');
       const { sql: whereClause, values: whereValues } = this.buildWhereClause();
-      
+
       let sql = `SELECT ${selectClause} FROM ${this.table}`;
       const values = [...whereValues];
 
@@ -247,7 +247,7 @@ class QueryBuilder {
       }
 
       const result = await pool.query(sql, values);
-      
+
       // Handle single() and maybeSingle()
       let data = result.rows;
       if (this.limitCount === 1) {

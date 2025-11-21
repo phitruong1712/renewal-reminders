@@ -11,6 +11,7 @@ export type CustomerRow = {
   distributor_name: string | null;
   distributor_contact_name: string | null;
   distributor_primary_email: string | null;
+  distributor_cc_emails: string[] | null;
   reseller_name: string | null;
   reseller_contact_name: string | null;
   reseller_primary_email: string | null;
@@ -39,6 +40,7 @@ export type CustomerInput = {
   distributor_name?: string;
   distributor_contact_name?: string;
   distributor_primary_email?: string;
+  distributor_cc_emails?: string[];
   reseller_name?: string;
   reseller_contact_name?: string;
   reseller_primary_email?: string;
@@ -71,11 +73,11 @@ export function getRecipientInfo(customer: CustomerRow): {
       email: customer.distributor_primary_email,
       name: customer.distributor_contact_name,
       company: customer.distributor_name,
-      cc: null,
+      cc: customer.distributor_cc_emails,
       relationship: 'distributor',
     };
   }
-  
+
   // If reseller exists and is not "Not Applicable"
   if (
     customer.reseller_primary_email &&
@@ -90,7 +92,7 @@ export function getRecipientInfo(customer: CustomerRow): {
       relationship: 'reseller',
     };
   }
-  
+
   // Default to end_user (direct sale)
   return {
     email: customer.end_user_primary_email || customer.primary_email,

@@ -33,12 +33,12 @@ export async function POST(request: NextRequest) {
 
     const customer = customers[0];
     const recipient = getRecipientInfo(customer);
-    
+
     const to = recipient.email;
     const cc = recipient.cc ?? undefined;
     const expiresDate = customer.expires_on ? dayjs(customer.expires_on).format('YYYY-MM-DD') : 'Unknown date';
     const daysLeft = customer.expires_on ? dayjs(customer.expires_on).diff(dayjs(), 'day') : 0;
-    
+
     // Build subject
     let subject = `[TEST] Renewal reminder — expires ${expiresDate}`;
     if (daysLeft > 0) {
@@ -48,35 +48,35 @@ export async function POST(request: NextRequest) {
     } else {
       subject += ` (expired ${Math.abs(daysLeft)} day${Math.abs(daysLeft) !== 1 ? 's' : ''} ago)`;
     }
-    
+
     // Build body
     const contactName = recipient.name || 'there';
     const companyName = recipient.company || 'your account';
     const planName = customer.edition || customer.plan_name || 'your plan';
     const licensing = customer.licensing ? ` (${customer.licensing})` : '';
-    
-    let body = `Hi ${contactName},\n\n`;
-    body += `[THIS IS A TEST EMAIL]\n\n`;
-    
+
+    let emailBody = `Hi ${contactName},\n\n`;
+    emailBody += `[THIS IS A TEST EMAIL]\n\n`;
+
     if (recipient.relationship === 'distributor') {
-      body += `Your distributor agreement for ${companyName} will expire on ${expiresDate}.\n`;
-      body += `This affects the reseller and end-user relationships in your distribution chain.\n`;
+      emailBody += `Your distributor agreement for ${companyName} will expire on ${expiresDate}.\n`;
+      emailBody += `This affects the reseller and end-user relationships in your distribution chain.\n`;
     } else if (recipient.relationship === 'reseller') {
-      body += `Your reseller agreement for ${companyName} will expire on ${expiresDate}.\n`;
-      body += `This affects the end-user customers you serve.\n`;
+      emailBody += `Your reseller agreement for ${companyName} will expire on ${expiresDate}.\n`;
+      emailBody += `This affects the end-user customers you serve.\n`;
     } else {
-      body += `Your subscription for ${companyName} (${planName}${licensing}) will expire on ${expiresDate}.\n`;
+      emailBody += `Your subscription for ${companyName} (${planName}${licensing}) will expire on ${expiresDate}.\n`;
     }
-    
-    body += `\n${daysLeft > 0 ? `That's in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}!` : daysLeft === 0 ? 'That\'s today!' : 'This has expired.'}\n`;
-    body += `\nPlease renew before the date to avoid interruption.\n`;
+
+    emailBody += `\n${daysLeft > 0 ? `That's in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}!` : daysLeft === 0 ? 'That\'s today!' : 'This has expired.'}\n`;
+    emailBody += `\nPlease renew before the date to avoid interruption.\n`;
     if (customer.renew_link) {
-      body += `Renew here: ${customer.renew_link}\n`;
+      emailBody += `Renew here: ${customer.renew_link}\n`;
     }
-    body += `\nThank you!`;
+    emailBody += `\nThank you!`;
 
     // Send email
-    const result = await sendEmailRaw(to, subject, body, cc);
+    const result = await sendEmailRaw(to, subject, emailBody, cc);
 
     return NextResponse.json({
       ok: true,
